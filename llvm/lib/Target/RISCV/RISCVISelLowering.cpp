@@ -6887,6 +6887,15 @@ SDValue RISCVTargetLowering::lowerGlobalAddress(SDValue Op,
   GlobalAddressSDNode *N = cast<GlobalAddressSDNode>(Op);
   assert(N->getOffset() == 0 && "unexpected offset in global node");
   const GlobalValue *GV = N->getGlobal();
+  // Radiance: __shared globals alias this CTA's smem base CSR (csrr rd, 0xfca)
+  if (GV->getAddressSpace() == 1) {
+    SDLoc DL(N);
+    MVT XLenVT = Subtarget.getXLenVT();
+    return SDValue(DAG.getMachineNode(RISCV::CSRRS, DL, XLenVT,
+                                      DAG.getTargetConstant(0xfca, DL, XLenVT),
+                                      DAG.getRegister(RISCV::X0, XLenVT)),
+                   0);
+  }
   return getAddr(N, DAG, GV->isDSOLocal(), GV->hasExternalWeakLinkage());
 }
 
