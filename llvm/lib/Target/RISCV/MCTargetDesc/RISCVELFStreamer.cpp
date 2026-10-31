@@ -13,6 +13,7 @@
 #include "RISCVELFStreamer.h"
 #include "RISCVAsmBackend.h"
 #include "RISCVBaseInfo.h"
+#include "RISCVMCExpr.h"
 #include "RISCVMCTargetDesc.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/MC/MCAsmBackend.h"
@@ -20,6 +21,7 @@
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCValue.h"
@@ -135,6 +137,9 @@ void RISCVELFStreamer::reset() {
   MappingSymbolCounter = 0;
   LastMappingSymbols.clear();
   LastEMS = EMS_None;
+  CurFn = nullptr;
+  FnRegs.clear();
+  FnRefs.clear();
 }
 
 void RISCVELFStreamer::emitDataMappingSymbol() {
@@ -170,10 +175,78 @@ void RISCVELFStreamer::changeSection(MCSection *Section,
   MCELFStreamer::changeSection(Section, Subsection);
 }
 
+void RISCVELFStreamer::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
+  // .type sym,@function precedes the label in both compiled code and asm
+  if (cast<MCSymbolELF>(Symbol)->getType() == ELF::STT_FUNC)
+    CurFn = Symbol;
+  MCELFStreamer::emitLabel(Symbol, Loc);
+}
+
+void RISCVELFStreamer::addRefs(const MCExpr *E) {
+  switch (E->getKind()) {
+  case MCExpr::SymbolRef: {
+    auto &Sym = const_cast<MCSymbol &>(cast<MCSymbolRefExpr>(E)->getSymbol());
+    // temporaries are basic blocks and constants, never functions
+    if (!Sym.isTemporary())
+      FnRefs.insert({CurFn, &Sym});
+    break;
+  }
+  case MCExpr::Binary:
+    addRefs(cast<MCBinaryExpr>(E)->getLHS());
+    addRefs(cast<MCBinaryExpr>(E)->getRHS());
+    break;
+  case MCExpr::Unary:
+    addRefs(cast<MCUnaryExpr>(E)->getSubExpr());
+    break;
+  case MCExpr::Target:
+    addRefs(cast<RISCVMCExpr>(E)->getSubExpr());
+    break;
+  case MCExpr::Constant:
+    break;
+  }
+}
+
 void RISCVELFStreamer::emitInstruction(const MCInst &Inst,
                                        const MCSubtargetInfo &STI) {
+  if (CurFn) {
+    const MCRegisterInfo &MRI = *getContext().getRegisterInfo();
+    const MCRegisterClass &GPR = MRI.getRegClass(RISCV::GPRRegClassID);
+    const MCInstrDesc &Desc = MCII->get(Inst.getOpcode());
+    auto &Mask = FnRegs[CurFn];
+    auto AddDef = [&](MCRegister Reg) {
+      if (GPR.contains(Reg)) {
+        unsigned Idx = MRI.getEncodingValue(Reg) & 127;
+        Mask[Idx / 32] |= 1u << (Idx % 32);
+      }
+    };
+    for (unsigned I = 0; I < Desc.getNumDefs(); ++I)
+      if (Inst.getOperand(I).isReg())
+        AddDef(Inst.getOperand(I).getReg());
+    for (MCPhysReg Reg : Desc.implicit_defs())
+      AddDef(Reg);
+    for (const MCOperand &Op : Inst)
+      if (Op.isExpr())
+        addRefs(Op.getExpr());
+  }
   emitInstructionsMappingSymbol();
   MCELFStreamer::emitInstruction(Inst, STI);
+}
+
+void RISCVELFStreamer::finishImpl() {
+  if (!FnRegs.empty()) {
+    switchSection(getContext().getELFSection(".rad.regs", ELF::SHT_PROGBITS, 0));
+    for (auto &[Fn, Mask] : FnRegs) {
+      emitSymbolValue(Fn, 4);
+      for (uint32_t Word : Mask)
+        emitInt32(Word);
+    }
+    switchSection(getContext().getELFSection(".rad.refs", ELF::SHT_PROGBITS, 0));
+    for (auto &[From, To] : FnRefs) {
+      emitSymbolValue(From, 4);
+      emitSymbolValue(To, 4);
+    }
+  }
+  MCELFStreamer::finishImpl();
 }
 
 void RISCVELFStreamer::emitBytes(StringRef Data) {

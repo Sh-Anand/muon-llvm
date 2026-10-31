@@ -10,7 +10,13 @@
 #define LLVM_LIB_TARGET_RISCV_MCTARGETDESC_RISCVELFSTREAMER_H
 
 #include "RISCVTargetStreamer.h"
+#include "TargetInfo/RISCVTargetInfo.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/MC/MCELFStreamer.h"
+#include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/TargetRegistry.h"
+#include <array>
 
 using namespace llvm;
 
@@ -26,13 +32,24 @@ class RISCVELFStreamer : public MCELFStreamer {
   DenseMap<const MCSection *, ElfMappingSymbol> LastMappingSymbols;
   ElfMappingSymbol LastEMS = EMS_None;
 
+  // Radiance: per-function GPR def masks and symbol refs, emitted as
+  // .rad.regs {func, mask[4]} and .rad.refs {from, to} for the loader
+  std::unique_ptr<const MCInstrInfo> MCII;
+  MCSymbol *CurFn = nullptr;
+  MapVector<MCSymbol *, std::array<uint32_t, 4>> FnRegs;
+  SetVector<std::pair<MCSymbol *, MCSymbol *>> FnRefs;
+  void addRefs(const MCExpr *E);
+
 public:
   RISCVELFStreamer(MCContext &C, std::unique_ptr<MCAsmBackend> MAB,
                    std::unique_ptr<MCObjectWriter> MOW,
                    std::unique_ptr<MCCodeEmitter> MCE)
-      : MCELFStreamer(C, std::move(MAB), std::move(MOW), std::move(MCE)) {}
+      : MCELFStreamer(C, std::move(MAB), std::move(MOW), std::move(MCE)),
+        MCII(getTheRISCV32Target().createMCInstrInfo()) {}
 
   void changeSection(MCSection *Section, const MCExpr *Subsection) override;
+  void emitLabel(MCSymbol *Symbol, SMLoc Loc = SMLoc()) override;
+  void finishImpl() override;
   void emitInstruction(const MCInst &Inst, const MCSubtargetInfo &STI) override;
   void emitBytes(StringRef Data) override;
   void emitFill(const MCExpr &NumBytes, uint64_t FillValue, SMLoc Loc) override;
