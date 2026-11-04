@@ -9,8 +9,10 @@ cat > "$SYSROOT_OVERLAY/include/gnu/stubs-ilp32.h" <<'EOF'
 /* shim for rv32 target; provides missing glibc stubs include */
 EOF
 
-CFLAGS="-march=rv32ima_zfinx_zhinx --sysroot=$RUNTIME_SYSROOT -isystem $SYSROOT_OVERLAY/include -D_POSIX_C_SOURCE=200809L -fPIC"
-CXXFLAGS="-march=rv32ima_zfinx_zhinx --sysroot=$RUNTIME_SYSROOT -isystem $SYSROOT_OVERLAY/include -D_POSIX_C_SOURCE=200809L -fPIC"
+# Muon never frees registers, so keep runtime code within x0-x31
+GPR_CAP="-mllvm -riscv-max-allocatable-gprs=32"
+CFLAGS="-march=rv32ima_zfinx_zhinx --sysroot=$RUNTIME_SYSROOT -isystem $SYSROOT_OVERLAY/include -D_POSIX_C_SOURCE=200809L -fPIC $GPR_CAP"
+CXXFLAGS="-march=rv32ima_zfinx_zhinx --sysroot=$RUNTIME_SYSROOT -isystem $SYSROOT_OVERLAY/include -D_POSIX_C_SOURCE=200809L -fPIC $GPR_CAP"
 TARGET="riscv32-unknown-elf"
 
 cmake -G "Ninja" ../llvm \
