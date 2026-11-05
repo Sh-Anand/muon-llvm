@@ -16794,21 +16794,29 @@ static Register BrCondToNECodeGen(RISCVCC::CondCode CC,
         .addReg(LHS)
         .addReg(RHS);
     break;
-  case RISCVCC::COND_GE:
-    BuildMI(MBB, loc, DL, TII.get(RISCV::SLT), Result)
-        .addReg(RHS)
-        .addReg(LHS);
-    break;
+  case RISCVCC::COND_GE: { // !(LHS < RHS)
+    auto Result1 = MBB.getParent()->getRegInfo().createVirtualRegister(&RISCV::GPRRegClass);
+    BuildMI(MBB, loc, DL, TII.get(RISCV::SLT), Result1)
+        .addReg(LHS)
+        .addReg(RHS);
+    BuildMI(MBB, loc, DL, TII.get(RISCV::XORI), Result)
+        .addReg(Result1)
+        .addImm(1);
+    } break;
   case RISCVCC::COND_LTU:
     BuildMI(MBB, loc, DL, TII.get(RISCV::SLTU), Result)
         .addReg(LHS)
         .addReg(RHS);
     break;
-  case RISCVCC::COND_GEU:
-    BuildMI(MBB, loc, DL, TII.get(RISCV::SLTU), Result)
-        .addReg(RHS)
-        .addReg(LHS);
-    break;
+  case RISCVCC::COND_GEU: { // !(LHS <u RHS)
+    auto Result1 = MBB.getParent()->getRegInfo().createVirtualRegister(&RISCV::GPRRegClass);
+    BuildMI(MBB, loc, DL, TII.get(RISCV::SLTU), Result1)
+        .addReg(LHS)
+        .addReg(RHS);
+    BuildMI(MBB, loc, DL, TII.get(RISCV::XORI), Result)
+        .addReg(Result1)
+        .addImm(1);
+    } break;
   }
   return Result;
 }
@@ -17304,7 +17312,9 @@ static MachineBasicBlock *emitFROUND(MachineInstr &MI, MachineBasicBlock *MBB,
     InsertVXSplit(&CCReg, &DVReg, RISCVCC::COND_NE, CmpReg, RISCV::X0,
                   *MBB, MBB->end(), DL, TII);
 
-    BuildMI(MBB, DL, TII.getBrCond(RISCVCC::COND_NE))
+    // in-range lanes (CCReg != 0) convert; the rest skip to DoneMBB, like the
+    // BEQ below
+    BuildMI(MBB, DL, TII.getBrCond(RISCVCC::COND_EQ))
         .addReg(CCReg)
         .addReg(RISCV::X0)
         .addMBB(DoneMBB);
