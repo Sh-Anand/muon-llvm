@@ -464,9 +464,13 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   StackOffset Offset =
       getFrameLowering(MF)->getFrameIndexReference(MF, FrameIndex, FrameReg);
   bool IsRVVSpill = RISCV::isRVVSpill(MI);
-  if (!IsRVVSpill)
-    Offset += StackOffset::getFixed(scaleFixedStackOffset(
-        ST, MI.getOperand(FIOperandNum + 1).getImm()));
+  if (!IsRVVSpill) {
+    // Objects on the data stack are contiguous.
+    int64_t Imm = MI.getOperand(FIOperandNum + 1).getImm();
+    if (MF.getFrameInfo().getStackID(FrameIndex) != TargetStackID::NoAlloc)
+      Imm = scaleFixedStackOffset(ST, Imm);
+    Offset += StackOffset::getFixed(Imm);
+  }
 
   if (Offset.getScalable() &&
       ST.getRealMinVLen() == ST.getRealMaxVLen()) {
@@ -576,7 +580,9 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
 bool RISCVRegisterInfo::requiresVirtualBaseRegisters(
     const MachineFunction &MF) const {
-  return true;
+  // A base register reaches other frame objects by their unscaled distance from it, which the
+  // lane-interleaved stack cannot scale.
+  return MF.getSubtarget<RISCVSubtarget>().getStackWordStride() == 1;
 }
 
 // Returns true if the instruction's frame index reference would be better

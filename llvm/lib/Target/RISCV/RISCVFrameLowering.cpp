@@ -65,6 +65,19 @@ static StackOffset scaleFixedStackOffset(const RISCVSubtarget &STI,
                           Offset.getScalable());
 }
 
+// Under the lane-interleaved stack, frame objects that cannot be interleaved live on a second,
+// per-thread contiguous stack addressed by gp (see processFunctionBeforeFrameFinalized).  They
+// carry TargetStackID::NoAlloc, so nothing lays them out in the sp frame.  Returns the bytes of
+// that stack this function holds.
+static uint64_t getDataStackSize(const MachineFunction &MF) {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  uint64_t Size = 0;
+  for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI)
+    if (!MFI.isDeadObjectIndex(FI) && MFI.getStackID(FI) == TargetStackID::NoAlloc)
+      Size = std::max<uint64_t>(Size, MFI.getObjectOffset(FI) + MFI.getObjectSize(FI));
+  return alignTo(Size, 16);
+}
+
 static Align getABIStackAlignment(RISCVABI::ABI ABI) {
   if (ABI == RISCVABI::ABI_ILP32E)
     return Align(4);
@@ -518,6 +531,11 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
+  if (uint64_t DataStackSize = getDataStackSize(MF))
+    RI->adjustReg(MBB, MBBI, DL, RISCV::X3, RISCV::X3,
+                  StackOffset::getFixed(-static_cast<int64_t>(DataStackSize)),
+                  MachineInstr::FrameSetup, std::nullopt);
+
   // Emit prologue for shadow call stack.
   emitSCSPrologue(MF, MBB, MBBI, DL);
 
@@ -847,6 +865,11 @@ void RISCVFrameLowering::emitEpilogue(MachineFunction &MF,
                   MachineInstr::FrameDestroy, getStackAlign());
   }
 
+  if (uint64_t DataStackSize = getDataStackSize(MF))
+    RI->adjustReg(MBB, MBBI, DL, RISCV::X3, RISCV::X3,
+                  StackOffset::getFixed(DataStackSize),
+                  MachineInstr::FrameDestroy, std::nullopt);
+
   // Emit epilogue for shadow call stack.
   emitSCSEpilogue(MF, MBB, MBBI, DL);
 }
@@ -866,6 +889,12 @@ RISCVFrameLowering::getFrameIndexReference(const MachineFunction &MF, int FI,
   int MaxCSFI = -1;
   StackOffset Offset;
   auto StackID = MFI.getStackID(FI);
+
+  // On the data stack: contiguous, so its offset is not scaled by the stride.
+  if (StackID == TargetStackID::NoAlloc) {
+    FrameReg = RISCV::X3;
+    return StackOffset::getFixed(MFI.getObjectOffset(FI));
+  }
 
   assert((StackID == TargetStackID::Default ||
           StackID == TargetStackID::ScalableVector) &&
@@ -1269,6 +1298,42 @@ void RISCVFrameLowering::processFunctionBeforeFrameFinalized(
   // over the base/immediate split in eliminateFrameIndex.  Costs at most 3 logical bytes per
   // sub-word object, and there is no size pressure here: the frame is already scaled by the stride.
   if (MF.getSubtarget<RISCVSubtarget>().getStackWordStride() != 1) {
+    // Neither can keep the lanes' stack pointers 4 bytes apart.
+    if (MFI.hasVarSizedObjects() || RegInfo->hasStackRealignment(MF))
+      report_fatal_error("lane-interleaved stack: variable sized and over-aligned stack objects "
+                         "are not supported");
+
+    // The stride scales frame offsets known here, so an object can stay on the interleaved stack
+    // only if every reference to it is a load or store inside one word at a fixed offset.  One
+    // whose address is materialized (an indexed array, a local passed by pointer) is then reached
+    // by ordinary pointer arithmetic, which would walk into the sibling lanes' slots: move it to
+    // the data stack.  Fixed objects stay, since the caller already wrote them interleaved.
+    BitVector Moved(MFI.getObjectIndexEnd());
+    for (const MachineBasicBlock &MBB : MF)
+      for (const MachineInstr &MI : MBB) {
+        if (MI.isMetaInstruction())
+          continue;
+        for (unsigned I = 0, E = MI.getNumOperands(); I != E; ++I) {
+          const MachineOperand &MO = MI.getOperand(I);
+          if (!MO.isFI() || MO.getIndex() < 0 ||
+              MFI.getStackID(MO.getIndex()) != TargetStackID::Default)
+            continue;
+          bool InWord = MI.mayLoadOrStore() && MI.hasOneMemOperand() && I + 1 != E &&
+                        MI.getOperand(I + 1).isImm() &&
+                        (MI.getOperand(I + 1).getImm() & 3) +
+                                (*MI.memoperands_begin())->getSize() <= 4;
+          if (!InWord)
+            Moved.set(MO.getIndex());
+        }
+      }
+    uint64_t DataStackSize = 0;
+    for (int FI : Moved.set_bits()) {
+      DataStackSize = alignTo(DataStackSize, MFI.getObjectAlign(FI));
+      MFI.setStackID(FI, TargetStackID::NoAlloc);
+      MFI.setObjectOffset(FI, DataStackSize);
+      DataStackSize += MFI.getObjectSize(FI);
+    }
+
     for (int FI = MFI.getObjectIndexBegin(), E = MFI.getObjectIndexEnd(); FI != E; ++FI) {
       if (MFI.isDeadObjectIndex(FI) || MFI.getStackID(FI) != TargetStackID::Default)
         continue;
