@@ -8,6 +8,7 @@
 
 #include "ABIInfoImpl.h"
 #include "TargetInfo.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace clang;
 using namespace clang::CodeGen;
@@ -504,6 +505,41 @@ Address RISCVABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
 
   // Arguments bigger than 2*Xlen bytes are passed indirectly.
   bool IsIndirect = TInfo.Width > 2 * SlotSize;
+
+  // Lane-interleaved stack (-mllvm -riscv-stack-word-stride=N, a backend option, read here from
+  // the option registry): consecutive argument words are 4*N bytes apart, so step by that and
+  // gather an argument of two words into a temporary.
+  unsigned Stride = 1;
+  auto &Opts = llvm::cl::getRegisteredOptions();
+  if (auto It = Opts.find("riscv-stack-word-stride"); It != Opts.end())
+    Stride = static_cast<llvm::cl::opt<unsigned> *>(It->second)->getValue();
+  if (Stride != 1) {
+    CGBuilderTy &B = CGF.Builder;
+    llvm::Type *WordTy = llvm::IntegerType::get(CGF.getLLVMContext(), XLen);
+    uint64_t Step = SlotSize.getQuantity() * Stride;
+    auto WordAt = [&](llvm::Value *Ptr, uint64_t W) {
+      return B.CreateGEP(CGF.Int8Ty, Ptr, llvm::ConstantInt::get(CGF.IntPtrTy, W * Step));
+    };
+    llvm::Value *Cur = B.CreateLoad(VAListAddr, "argp.cur");
+    // A 2*XLEN-aligned argument starts on an even word.  The runtime aligns the top of the
+    // stack to 2*Step, so the word's parity is the Step bit of its address.
+    if (!IsIndirect && TInfo.Align > SlotSize)
+      Cur = B.CreateGEP(CGF.Int8Ty, Cur,
+                        B.CreateAnd(B.CreatePtrToInt(Cur, CGF.IntPtrTy), Step));
+    uint64_t Words = IsIndirect ? 1 : TInfo.Width.alignTo(SlotSize) / SlotSize;
+    B.CreateStore(WordAt(Cur, Words), VAListAddr);
+    llvm::Type *MemTy = CGF.ConvertTypeForMem(Ty);
+    if (IsIndirect)
+      return Address(B.CreateLoad(Address(Cur, CGF.VoidPtrTy, SlotSize)), MemTy, TInfo.Align);
+    if (Words <= 1)
+      return Address(Cur, MemTy, SlotSize);
+    Address Tmp = CGF.CreateTempAlloca(llvm::ArrayType::get(WordTy, Words),
+                                       std::max(SlotSize, TInfo.Align), "vaarg.tmp");
+    for (uint64_t W = 0; W != Words; ++W)
+      B.CreateStore(B.CreateLoad(Address(WordAt(Cur, W), WordTy, SlotSize)),
+                    B.CreateConstArrayGEP(Tmp, W));
+    return Tmp.withElementType(MemTy);
+  }
 
   return emitVoidPtrVAArg(CGF, VAListAddr, Ty, IsIndirect, TInfo,
                           SlotSize, /*AllowHigherAlign=*/true);
