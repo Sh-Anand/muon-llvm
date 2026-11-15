@@ -18686,9 +18686,12 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
       // Work out the address of the stack slot.
       if (!StackPtr.getNode())
         StackPtr = DAG.getCopyFromReg(Chain, DL, RISCV::X2, PtrVT);
-      SDValue Address =
-          DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
-                      DAG.getIntPtrConstant(VA.getLocMemOffset(), DL));
+      // The lane-interleaved stack spaces argument words by the stride, where the callee reads
+      // them (see scaleFixedStackOffset in RISCVFrameLowering.cpp).
+      int64_t Offset = VA.getLocMemOffset();
+      Offset = (Offset & ~INT64_C(3)) * Subtarget.getStackWordStride() + (Offset & 3);
+      SDValue Address = DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
+                                    DAG.getIntPtrConstant(Offset, DL));
 
       // Emit the store.
       MemOpChains.push_back(
