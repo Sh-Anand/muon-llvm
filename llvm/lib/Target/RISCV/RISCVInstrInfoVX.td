@@ -44,6 +44,15 @@ def VX_PRED_N : RVInstR<0, 5, RISCV_CUSTOM0, (outs), (ins GPR:$rs1, GPR:$rs2), "
     let rd = 1;
 }
 
+// launch a grid of kernel `id`: rs1-rs4 hold the four words of the launch entry.  The id sits in the
+// rd field, where the loader writes it once it has numbered the kernels
+def VX_LAUNCH : RVInstR5<0, 6, 0, RISCV_CUSTOM0, (outs),
+                         (ins uimm8:$id, GPR:$rs1, GPR:$rs2, GPR:$rs3, GPR:$rs4),
+                         "vx_launch", "$id, $rs1, $rs2, $rs3, $rs4">, Sched<[]> {
+    bits<8> id;
+    let rd = id;
+}
+
 def VX_RAST : RVInstR<1, 0, RISCV_CUSTOM0, (outs GPR:$rd), (ins), "vx_rast", "">, Sched<[]> {
     let rs1 = 0;
     let rs2 = 0;
