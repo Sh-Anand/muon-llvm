@@ -2183,7 +2183,8 @@ bool RISCVInstrInfo::canFoldIntoAddrMode(const MachineInstr &MemI, Register Reg,
   if (!STI.is64Bit())
     NewOffset = SignExtend64<32>(NewOffset);
 
-  if (!isInt<12>(NewOffset))
+  // a load or store carries a 32-bit offset
+  if (!isInt<32>(NewOffset))
     return false;
 
   AM.BaseReg = AddrI.getOperand(1).getReg();

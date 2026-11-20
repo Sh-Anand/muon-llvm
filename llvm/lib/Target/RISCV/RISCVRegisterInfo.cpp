@@ -255,7 +255,8 @@ void RISCVRegisterInfo::adjustReg(MachineBasicBlock &MBB,
 
   const uint64_t Align = RequiredAlign.valueOrOne().value();
 
-  if (isInt<12>(Val)) {
+  // addi carries a 32-bit immediate
+  if (isInt<32>(Val)) {
     BuildMI(MBB, II, DL, TII->get(RISCV::ADDI), DestReg)
         .addReg(SrcReg, getKillRegState(KillSrcReg))
         .addImm(Val)
@@ -491,7 +492,14 @@ bool RISCVRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   }
 
   if (!IsRVVSpill) {
-    if (MI.getOpcode() == RISCV::ADDI && !isInt<12>(Offset.getFixed())) {
+    const MCInstrDesc &Desc = MI.getDesc();
+    if (FIOperandNum + 1 < Desc.getNumOperands() &&
+        Desc.operands()[FIOperandNum + 1].OperandType ==
+            RISCVOp::OPERAND_SIMM32) {
+      // The instruction's immediate holds the whole offset.
+      MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset.getFixed());
+      Offset = StackOffset::get(0, Offset.getScalable());
+    } else if (MI.getOpcode() == RISCV::ADDI && !isInt<12>(Offset.getFixed())) {
       // We chose to emit the canonical immediate sequence rather than folding
       // the offset into the using add under the theory that doing so doesn't
       // save dynamic instruction count and some target may fuse the canonical

@@ -1739,8 +1739,8 @@ bool RISCVTargetLowering::isLegalAddressingMode(const DataLayout &DL,
   if (Subtarget.hasVInstructions() && isa<VectorType>(Ty))
     return AM.HasBaseReg && AM.Scale == 0 && !AM.BaseOffs;
 
-  // Require a 12-bit signed offset.
-  if (!isInt<12>(AM.BaseOffs))
+  // Loads and stores carry a 32-bit signed offset.
+  if (!isInt<32>(AM.BaseOffs))
     return false;
 
   switch (AM.Scale) {
@@ -1757,12 +1757,13 @@ bool RISCVTargetLowering::isLegalAddressingMode(const DataLayout &DL,
   return true;
 }
 
+// Instructions with an immediate carry 32 bits of it.
 bool RISCVTargetLowering::isLegalICmpImmediate(int64_t Imm) const {
-  return isInt<12>(Imm);
+  return isInt<32>(Imm);
 }
 
 bool RISCVTargetLowering::isLegalAddImmediate(int64_t Imm) const {
-  return isInt<12>(Imm);
+  return isInt<32>(Imm);
 }
 
 // On RV32, 64-bit integers are split into their high and low parts and held
