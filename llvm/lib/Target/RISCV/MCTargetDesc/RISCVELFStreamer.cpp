@@ -224,6 +224,12 @@ void RISCVELFStreamer::emitInstruction(const MCInst &Inst,
         AddDef(Inst.getOperand(I).getReg());
     for (MCPhysReg Reg : Desc.implicit_defs())
       AddDef(Reg);
+    // vx_mma writes the three registers after rd as well
+    if (Inst.getOpcode() == RISCV::VX_MMA_BF16)
+      for (unsigned I = 1; I < 4; ++I) {
+        unsigned Idx = (MRI.getEncodingValue(Inst.getOperand(0).getReg()) + I) & 127;
+        Mask[Idx / 32] |= 1u << (Idx % 32);
+      }
     for (const MCOperand &Op : Inst)
       if (Op.isExpr())
         addRefs(Op.getExpr());

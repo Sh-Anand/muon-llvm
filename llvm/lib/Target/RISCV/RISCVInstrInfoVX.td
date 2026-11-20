@@ -53,6 +53,19 @@ def VX_LAUNCH : RVInstR5<0, 6, 0, RISCV_CUSTOM0, (outs),
     let rd = id;
 }
 
+// warp matrix multiply-accumulate, D = A * B + C, by all the threads of a warp at once, each holding a
+// share of every matrix in its registers as in Nvidia's mma.  Each operand names the first register
+// of a matrix's run of consecutive ones.  fmt is the element format of A and B, which sets the shape:
+//   0  bf16, two to a register: A 16x16 in 4 registers, B 16x8 in 2, C and D 16x8 fp32 in 4
+// 1 and 2 are kept for the two 8-bit floats, four to a register (16x8x32 in the same registers)
+class VXMma<bits<2> fmt, string opcodestr>
+    : RVInstR5<{0b00000, fmt}, 2, 0, RISCV_CUSTOM1, (outs GPR:$rd),
+               (ins GPR:$rs1, GPR:$rs2, GPR:$rs3), opcodestr, "$rd, $rs1, $rs2, $rs3">, Sched<[]> {
+    let rs4 = 0;
+}
+
+def VX_MMA_BF16 : VXMma<0, "vx_mma.bf16">;
+
 def VX_RAST : RVInstR<1, 0, RISCV_CUSTOM0, (outs GPR:$rd), (ins), "vx_rast", "">, Sched<[]> {
     let rs1 = 0;
     let rs2 = 0;
