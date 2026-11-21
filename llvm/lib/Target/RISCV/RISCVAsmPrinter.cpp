@@ -20,6 +20,7 @@
 #include "RISCVTargetMachine.h"
 #include "TargetInfo/RISCVTargetInfo.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -364,8 +365,43 @@ bool RISCVAsmPrinter::emitDirectiveOptionArch() {
   return false;
 }
 
+// Vortex: per kernel, the registers a thread is charged for (those it writes and _start's, not its
+// callees'), the warps a core then holds, and the spill slots it needed
+static cl::opt<bool> RegBudgetReport("riscv-reg-budget-report", cl::Hidden, cl::init(false),
+                                     cl::desc("Vortex: report each kernel's registers and spills"));
+
+static void reportRegBudget(const MachineFunction &MF) {
+  const auto *FI = MF.getInfo<RISCVMachineFunctionInfo>();
+  if (!FI->getRegNeed())
+    return;
+  BitVector Written(128);
+  for (unsigned R : {1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17})
+    Written.set(R);
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB)
+      for (const MachineOperand &MO : MI.operands())
+        if (MO.isReg() && MO.isDef() && MO.getReg() > RISCV::X0 &&
+            MO.getReg() <= RISCV::X127)
+          Written.set(MO.getReg() - RISCV::X0);
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  // spill slots, but for those that save callee-saved registers
+  SmallSet<int, 32> Saves;
+  for (const CalleeSavedInfo &CS : MFI.getCalleeSavedInfo())
+    Saves.insert(CS.getFrameIdx());
+  unsigned Spills = 0;
+  for (int I = MFI.getObjectIndexBegin(); I < MFI.getObjectIndexEnd(); I++)
+    Spills += MFI.isSpillSlotObjectIndex(I) && !MFI.isDeadObjectIndex(I) && !Saves.count(I);
+  unsigned Regs = Written.count() + 1; // and x0
+  errs() << "riscv-reg-budget: " << MF.getName() << ": " << Regs << " registers ("
+         << "need " << FI->getRegNeed() << ", budget " << FI->getRegBudget() << "), "
+         << std::min(8u, 512 / Regs) << " warps a core, " << Spills << " spill slots, "
+         << Saves.size() << " callee-saved registers saved\n";
+}
+
 bool RISCVAsmPrinter::runOnMachineFunction(MachineFunction &MF) {
   STI = &MF.getSubtarget<RISCVSubtarget>();
+  if (RegBudgetReport)
+    reportRegBudget(MF);
   RISCVTargetStreamer &RTS =
       static_cast<RISCVTargetStreamer &>(*OutStreamer->getTargetStreamer());
 

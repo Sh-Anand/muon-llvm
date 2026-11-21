@@ -76,6 +76,8 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   auto &Subtarget = MF->getSubtarget<RISCVSubtarget>();
   if (MF->getFunction().getCallingConv() == CallingConv::GHC)
     return CSR_NoRegs_SaveList;
+  if (Subtarget.hasVendorXVortex() && isVortexKernel(MF->getFunction()))
+    return CSR_VortexKernel_SaveList;
   if (MF->getFunction().hasFnAttribute("interrupt")) {
     if (Subtarget.hasStdExtD())
       return CSR_XLEN_F64_Interrupt_SaveList;
@@ -135,6 +137,14 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   if (Subtarget.isRVE())
     for (MCPhysReg Reg = RISCV::X16; Reg <= RISCV::X31; Reg++)
       markSuperRegs(Reserved, Reg);
+
+  // Vortex: only the GPRs the function's register budget allows (RISCVRegBudget)
+  const BitVector &BudgetGPRs =
+      MF.getInfo<RISCVMachineFunctionInfo>()->getBudgetGPRs();
+  if (!BudgetGPRs.empty())
+    for (unsigned I = 0; I < 128; I++)
+      if (!BudgetGPRs.test(I))
+        markSuperRegs(Reserved, RISCV::X0 + I);
 
   unsigned MaxAllocatableGPRs = Subtarget.getMaxAllocatableGPRs();
   if (MaxAllocatableGPRs < 128) {

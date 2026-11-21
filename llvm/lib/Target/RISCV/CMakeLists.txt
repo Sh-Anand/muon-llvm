@@ -50,6 +50,7 @@ add_llvm_target(RISCVCodeGen
   RISCVRedundantCopyElimination.cpp
   RISCVMoveMerger.cpp
   RISCVPushPopOptimizer.cpp
+  RISCVRegBudget.cpp
   RISCVRegisterInfo.cpp
   RISCVRVVInitUndef.cpp
   RISCVSubtarget.cpp

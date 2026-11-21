@@ -150,6 +150,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVInsertWriteVXRMPass(*PR);
   initializeRISCVDAGToDAGISelPass(*PR);
   initializeRISCVInitUndefPass(*PR);
+  initializeRISCVRegBudgetPass(*PR);
   initializeRISCVMoveMergePass(*PR);
   initializeRISCVPushPopOptPass(*PR);
 }
@@ -642,6 +643,8 @@ void RISCVPassConfig::addPreRegAlloc() {
 
 void RISCVPassConfig::addOptimizedRegAlloc() {
   insertPass(&DetectDeadLanesID, &RISCVInitUndefID);
+  // Vortex: choose the registers each function may use, before the scheduler
+  insertPass(&RegisterCoalescerID, &RISCVRegBudgetID);
 
   TargetPassConfig::addOptimizedRegAlloc();
 }

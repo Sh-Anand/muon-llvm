@@ -14,6 +14,7 @@
 #define LLVM_LIB_TARGET_RISCV_RISCVMACHINEFUNCTIONINFO_H
 
 #include "RISCVSubtarget.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MIRYamlMapping.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -76,8 +77,24 @@ private:
   unsigned RVPushRegs = 0;
   int RVPushRlist = llvm::RISCVZC::RLISTENCODE::INVALID_RLIST;
 
+  /// Vortex: the GPRs it may use, by number, as RISCVRegBudget chose them; empty
+  /// for no limit.  For a kernel, the registers a thread is charged for and the
+  /// estimate they were chosen from.
+  BitVector BudgetGPRs;
+  unsigned RegBudget = 0;
+  unsigned RegNeed = 0;
+
 public:
   RISCVMachineFunctionInfo(const Function &F, const TargetSubtargetInfo *STI) {}
+
+  const BitVector &getBudgetGPRs() const { return BudgetGPRs; }
+  unsigned getRegBudget() const { return RegBudget; }
+  unsigned getRegNeed() const { return RegNeed; }
+  void setRegBudget(const BitVector &GPRs, unsigned Budget, unsigned Need) {
+    BudgetGPRs = GPRs;
+    RegBudget = Budget;
+    RegNeed = Need;
+  }
 
   MachineFunctionInfo *
   clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,

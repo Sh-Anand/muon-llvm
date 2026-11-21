@@ -78,6 +78,13 @@ FunctionPass *createRISCVInitUndefPass();
 void initializeRISCVInitUndefPass(PassRegistry &);
 extern char &RISCVInitUndefID;
 
+FunctionPass *createRISCVRegBudgetPass();
+void initializeRISCVRegBudgetPass(PassRegistry &);
+extern char &RISCVRegBudgetID;
+unsigned RISCVRegBudgetStepTop(unsigned Regs);
+// a kernel: a function `__kernel__` puts in section rad_kernels
+bool isVortexKernel(const Function &F);
+
 FunctionPass *createRISCVMoveMergePass();
 void initializeRISCVMoveMergePass(PassRegistry &);
 

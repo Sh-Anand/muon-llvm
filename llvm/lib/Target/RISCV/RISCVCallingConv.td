@@ -38,6 +38,10 @@ def CSR_ILP32D_LP64D
 // Needed for implementation of RISCVRegisterInfo::getNoPreservedMask()
 def CSR_NoRegs : CalleeSavedRegs<(add)>;
 
+// Vortex: a kernel's caller is _start, which jumps to it with ra = 0 and never resumes, so a kernel need
+// keep no register for it but ra itself, the return to 0 that ends the warp
+def CSR_VortexKernel : CalleeSavedRegs<(add X1)>;
+
 // Interrupt handler needs to save/restore all registers that are used,
 // both Caller and Callee saved registers.
 def CSR_Interrupt : CalleeSavedRegs<(add X1, (sequence "X%u", 5, 127))>;
