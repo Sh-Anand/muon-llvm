@@ -31,6 +31,8 @@
 
 #include "llvm/Analysis/UniformityAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/RegionInfo.h"
 #include "llvm/Analysis/RegionIterator.h"
@@ -297,6 +299,7 @@ private:
   PostDominatorTree *PDT_;
   LoopInfo *LI_;
   RegionInfo *RI_;
+  ScalarEvolution *SE_;
 
   Type* SizeTTy_;
 
@@ -316,6 +319,8 @@ private:
   void processLoops(LLVMContext* context, Function* function);
 
   bool isUniform(Instruction *T);
+
+  bool hasUniformTripCount(BranchInst *Br);
 
 public:
 
@@ -382,6 +387,7 @@ INITIALIZE_PASS_DEPENDENCY(RegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(UniformityInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetPassConfig)
 INITIALIZE_PASS_END(VortexBranchDivergence1, "vortex-branch-divergence-1",
                     "Vortex Branch Divergence", false, false)
@@ -621,6 +627,7 @@ StringRef VortexBranchDivergence1::getPassName() const {
 }
 
 void VortexBranchDivergence1::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<ScalarEvolutionWrapperPass>();
   AU.addRequired<LoopInfoWrapperPass>();
   AU.addRequired<RegionInfoPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
@@ -668,6 +675,7 @@ void VortexBranchDivergence1::initialize(Function &F, const RISCVSubtarget &ST) 
 
   RI_ = &getAnalysis<RegionInfoPass>().getRegionInfo();
   LI_ = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+  SE_ = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   UA_ = &getAnalysis<UniformityInfoWrapperPass>().getUniformityInfo();
   DT_ = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
   PDT_= &getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
@@ -712,7 +720,7 @@ bool VortexBranchDivergence1::runOnFunction(Function &F) {
     }
 
     // only process divergent branches
-    if (this->isUniform(Br)) {
+    if (this->isUniform(Br) || this->hasUniformTripCount(Br)) {
       LLVM_DEBUG(dbgs() << "*** skip uniform branch: " << namePrinter_.BBName(BB) << "\n");
       continue;
     }
@@ -926,6 +934,25 @@ void VortexBranchDivergence1::processBranches(LLVMContext* context, Function* fu
       }
     }
   }
+}
+
+// A loop's only exiting branch goes the same way in every lane when the loop runs the same number of times
+// in every lane: when its trip count, as scalar evolution computes it, is made of uniform values only.
+// Loop strength reduction turns a uniform counter into a lane's own pointer, compared against that
+// pointer's end; the uniformity analysis then sees two divergent values, scalar evolution their uniform
+// difference.
+bool VortexBranchDivergence1::hasUniformTripCount(BranchInst *Br) {
+  BasicBlock *BB = Br->getParent();
+  Loop *L = LI_->getLoopFor(BB);
+  if (!L || L->getExitingBlock() != BB)
+    return false;
+  const SCEV *Count = SE_->getExitCount(L, BB);
+  if (isa<SCEVCouldNotCompute>(Count))
+    return false;
+  return !SCEVExprContains(Count, [this](const SCEV *S) {
+    auto *U = dyn_cast<SCEVUnknown>(S);
+    return U && !UA_->isUniform(U->getValue());
+  });
 }
 
 bool VortexBranchDivergence1::isUniform(Instruction *I) {
@@ -1190,8 +1217,12 @@ bool DivergenceTracker::isSourceOfDivergence(const Value *V) {
     return true;
   }
 
-  // We conservatively assume all function arguments to potentially be divergent
-  if (isa<Argument>(V)) {
+  // We conservatively assume all function arguments to potentially be divergent, but for a kernel's that
+  // only launches start: they come from its launch's one params block, the same in every lane
+  if (auto *A = dyn_cast<Argument>(V)) {
+    const Function *F = A->getParent();
+    if (isVortexKernel(*F) && none_of(F->users(), [](const User *U) { return isa<CallBase>(U); }))
+      return false;
     LLVM_DEBUG(dbgs() << "*** divergent function argument: " << V->getName() << "\n");
     return true;
   }
