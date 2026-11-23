@@ -72,6 +72,12 @@ def VX_MMA_BF16 : VXMma<0, "vx_mma.bf16">;
 let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isConvergent = 1 in
 def PseudoVX_MMA_BF16 : Pseudo<(outs VXQuad:$rd), (ins VXQuad:$rs1, VXPair:$rs2, VXQuad:$rs3), []>;
 
+// A data prefetch (__builtin_prefetch) is a load of a word of the line into x0: it brings the line into the cache
+// and writes no register, so nothing waits for it.  Expanded after allocation into LW x0 (RISCVExpandPseudo)
+// (marked as storing too, as LLVM's prefetch node is, so nothing is moved across it)
+let hasSideEffects = 1, mayLoad = 1, mayStore = 1 in
+def PseudoVX_PREFETCH : Pseudo<(outs), (ins GPRMem:$rs1, simm32:$imm32), []>;
+
 def VX_RAST : RVInstR<1, 0, RISCV_CUSTOM0, (outs GPR:$rd), (ins), "vx_rast", "">, Sched<[]> {
     let rs1 = 0;
     let rs2 = 0;
@@ -84,6 +90,11 @@ def VX_ROP : RVInstR4<0, 1, 0, RISCV_CUSTOM1, (outs), (ins GPR:$rs1, GPR:$rs2, G
 }
 
 }
+
+// prefetch a data line: PseudoVX_PREFETCH, a load into x0
+let Predicates = [HasVendorXVortex] in
+def : Pat<(prefetch (AddrRegImm (XLenVT GPR:$rs1), simm32:$imm32), timm, timm, (i32 1)),
+          (PseudoVX_PREFETCH GPR:$rs1, simm32:$imm32)>;
 
 def VX_MOV : Pseudo<(outs GPR:$dst), (ins GPR:$src), [], "vx_mov", "$dst, $src"> {}
 

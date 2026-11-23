@@ -936,7 +936,7 @@ def HasVendorXSfvfnrclipxfqf
 def FeatureVendorVortex
     : SubtargetFeature<"vortex", "HasVendorXVortex", "true",
                        "'Vortex' (Vortex ISA Extension)">;
-def HasVendorXVortex : Predicate<"Subtarget->HasVendorXVortex()">,
+def HasVendorXVortex : Predicate<"Subtarget->hasVendorXVortex()">,
                              AssemblerPredicate<(all_of FeatureVendorVortex),
                              "'Vortex' (Vortex ISA Extension)">;
 

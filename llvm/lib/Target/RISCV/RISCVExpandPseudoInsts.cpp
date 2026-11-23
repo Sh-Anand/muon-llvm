@@ -106,6 +106,12 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   // expanded instructions for each pseudo is correct in the Size field of the
   // tablegen definition for the pseudo.
   switch (MBBI->getOpcode()) {
+  case RISCV::PseudoVX_PREFETCH:
+    BuildMI(MBB, MBBI, MBBI->getDebugLoc(), TII->get(RISCV::LW), RISCV::X0)
+        .add(MBBI->getOperand(0))
+        .add(MBBI->getOperand(1));
+    MBBI->eraseFromParent();
+    return true;
   case RISCV::PseudoVX_MMA_BF16: {
     // vx_mma.bf16 names each run's first register; the runs themselves stay on it as implicit operands
     const TargetRegisterInfo *TRI = MBB.getParent()->getSubtarget().getRegisterInfo();

@@ -629,7 +629,8 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   if (Subtarget.is64Bit())
     setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::i32, Custom);
 
-  if (Subtarget.hasStdExtZicbop()) {
+  // Vortex prefetches data with a load into x0 (PseudoVX_PREFETCH)
+  if (Subtarget.hasStdExtZicbop() || Subtarget.hasVendorXVortex()) {
     setOperationAction(ISD::PREFETCH, MVT::Other, Legal);
   }
 
