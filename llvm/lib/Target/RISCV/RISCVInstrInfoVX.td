@@ -66,6 +66,12 @@ class VXMma<bits<2> fmt, string opcodestr>
 
 def VX_MMA_BF16 : VXMma<0, "vx_mma.bf16">;
 
+// vx_mma.bf16 as the compiler emits it: each operand a register run (RISCVISelDAGToDAG builds them from the
+// intrinsic's words), so the allocator places the runs.  Expanded after allocation into VX_MMA_BF16 naming each
+// run's first register (RISCVExpandPseudo)
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isConvergent = 1 in
+def PseudoVX_MMA_BF16 : Pseudo<(outs VXQuad:$rd), (ins VXQuad:$rs1, VXPair:$rs2, VXQuad:$rs3), []>;
+
 def VX_RAST : RVInstR<1, 0, RISCV_CUSTOM0, (outs GPR:$rd), (ins), "vx_rast", "">, Sched<[]> {
     let rs1 = 0;
     let rs2 = 0;

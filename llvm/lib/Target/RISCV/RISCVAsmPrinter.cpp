@@ -380,9 +380,10 @@ static void reportRegBudget(const MachineFunction &MF) {
   for (const MachineBasicBlock &MBB : MF)
     for (const MachineInstr &MI : MBB)
       for (const MachineOperand &MO : MI.operands())
-        if (MO.isReg() && MO.isDef() && MO.getReg() > RISCV::X0 &&
-            MO.getReg() <= RISCV::X127)
-          Written.set(MO.getReg() - RISCV::X0);
+        if (MO.isReg() && MO.isDef() && MO.getReg().isPhysical())
+          for (MCPhysReg R : MF.getSubtarget().getRegisterInfo()->subregs_inclusive(MO.getReg()))
+            if (R > RISCV::X0 && R <= RISCV::X127)
+              Written.set(R - RISCV::X0);
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   // spill slots, but for those that save callee-saved registers
   SmallSet<int, 32> Saves;

@@ -89,5 +89,9 @@ TARGET_BUILTIN(__builtin_riscv_sm3p1, "UiUi", "nc", "zksh")
 TARGET_BUILTIN(__builtin_riscv_ntl_load, "v.", "t", "zihintntl")
 TARGET_BUILTIN(__builtin_riscv_ntl_store, "v.", "t", "zihintntl")
 
+// Vortex: warp matrix multiply, c[4] = a * b + c (vx_mma.bf16), by all the warp's threads at once: a thread's
+// shares of A (4 words, two bf16 each), B (2 words) and C (4 fp32)
+TARGET_BUILTIN(__builtin_riscv_vx_mma_bf16, "vf*UiC*UiC*", "n", "")
+
 #undef BUILTIN
 #undef TARGET_BUILTIN

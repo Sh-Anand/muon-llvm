@@ -21095,6 +21095,25 @@ Value *CodeGenFunction::EmitHexagonBuiltinExpr(unsigned BuiltinID,
 Value *CodeGenFunction::EmitRISCVBuiltinExpr(unsigned BuiltinID,
                                              const CallExpr *E,
                                              ReturnValueSlot ReturnValue) {
+  if (BuiltinID == RISCV::BI__builtin_riscv_vx_mma_bf16) {
+    // the shares go to the intrinsic as words, C's fp32 as their bits, and D's words replace C's
+    Address C = EmitPointerWithAlignment(E->getArg(0)).withElementType(Int32Ty);
+    Address A = EmitPointerWithAlignment(E->getArg(1)).withElementType(Int32Ty);
+    Address B = EmitPointerWithAlignment(E->getArg(2)).withElementType(Int32Ty);
+    SmallVector<Value *, 10> Args;
+    for (unsigned I = 0; I < 4; ++I)
+      Args.push_back(Builder.CreateLoad(Builder.CreateConstInBoundsGEP(A, I)));
+    for (unsigned I = 0; I < 2; ++I)
+      Args.push_back(Builder.CreateLoad(Builder.CreateConstInBoundsGEP(B, I)));
+    for (unsigned I = 0; I < 4; ++I)
+      Args.push_back(Builder.CreateLoad(Builder.CreateConstInBoundsGEP(C, I)));
+    Value *D = Builder.CreateCall(CGM.getIntrinsic(Intrinsic::riscv_vx_mma_bf16), Args);
+    Value *Store = nullptr;
+    for (unsigned I = 0; I < 4; ++I)
+      Store = Builder.CreateStore(Builder.CreateExtractValue(D, I), Builder.CreateConstInBoundsGEP(C, I));
+    return Store;
+  }
+
   SmallVector<Value *, 4> Ops;
   llvm::Type *ResultType = ConvertType(E->getType());
 

@@ -67,6 +67,11 @@ def sub_vrm1_7 : ComposedSubRegIndex<sub_vrm2_3, sub_vrm1_1>;
 // FIXME: Support HwMode in SubRegIndex?
 def sub_gpr_even : SubRegIndex<-1>;
 def sub_gpr_odd  : SubRegIndex<-1, -1>;
+// Vortex (RV32): the four registers of a run of four consecutive GPRs, in order
+def sub_gpr_q0 : SubRegIndex<32>;
+def sub_gpr_q1 : SubRegIndex<32, 32>;
+def sub_gpr_q2 : SubRegIndex<32, 64>;
+def sub_gpr_q3 : SubRegIndex<32, 96>;
 } // Namespace = "RISCV"
 
 // Integer registers
@@ -725,7 +730,8 @@ let RegAltNameIndices = [ABIRegAltName] in {
     let SubRegIndices = [sub_gpr_even, sub_gpr_odd];
     let CoveredBySubRegs = 1;
   }
-  foreach I = 1-15 in {
+  // pairs above x31 exist only for Vortex's register runs; GPRPair below leaves them out
+  foreach I = 1-63 in {
     defvar Index = !shl(I, 1);
     defvar IndexP1 = !add(Index, 1);
     defvar Reg = !cast<Register>("X"#Index);
@@ -754,6 +760,24 @@ def GPRPair : RegisterClass<"RISCV", [XLenPairFVT], 64, (add
     // X48_X49, X50_X51, X52_X53, X54_X55, X56_X57, X58_X59, X60_X61, X62_X63, X64_X65, X66_X67, X68_X69, X70_X71, X72_X73, X74_X75, X76_X77, X78_X79, X80_X81, X82_X83, X84_X85, X86_X87, X88_X89, X90_X91, X92_X93, X94_X95,
     X0_Pair, X2_X3, X4_X5
 )>;
+
+// Vortex: runs of four consecutive GPRs from any even register, for vx_mma's A, C and D
+foreach I = 3-62 in {
+  defvar Index = !shl(I, 1);
+  def "X" # Index # "_X" # !add(Index, 3) : RISCVRegWithSubRegs<Index, "x" # Index # "q",
+      [!cast<Register>("X" # Index), !cast<Register>("X" # !add(Index, 1)),
+       !cast<Register>("X" # !add(Index, 2)), !cast<Register>("X" # !add(Index, 3))]> {
+    let SubRegIndices = [sub_gpr_q0, sub_gpr_q1, sub_gpr_q2, sub_gpr_q3];
+    let CoveredBySubRegs = 1;
+  }
+}
+
+// Vortex: the register runs vx_mma reads and writes, by preference in the GPR class's order of their first
+// register; a run that takes in a reserved register is reserved with it
+let RegInfos = RegInfoByHwMode<[RV32, RV64], [RegInfo<64, 64, 64>, RegInfo<128, 128, 128>]> in
+def VXPair : RegisterClass<"RISCV", [untyped], 64, (add X10_X11, X12_X13, X14_X15, X16_X17, X32_X33, X34_X35, X36_X37, X38_X39, X40_X41, X42_X43, X44_X45, X46_X47, X6_X7, X28_X29, X30_X31, X96_X97, X98_X99, X100_X101, X102_X103, X104_X105, X106_X107, X108_X109, X110_X111, X112_X113, X114_X115, X116_X117, X118_X119, X120_X121, X122_X123, X124_X125, X126_X127, X8_X9, X18_X19, X20_X21, X22_X23, X24_X25, X26_X27, X48_X49, X50_X51, X52_X53, X54_X55, X56_X57, X58_X59, X60_X61, X62_X63, X64_X65, X66_X67, X68_X69, X70_X71, X72_X73, X74_X75, X76_X77, X78_X79, X80_X81, X82_X83, X84_X85, X86_X87, X88_X89, X90_X91, X92_X93, X94_X95)>;
+let RegInfos = RegInfoByHwMode<[RV32, RV64], [RegInfo<128, 128, 128>, RegInfo<256, 256, 256>]> in
+def VXQuad : RegisterClass<"RISCV", [untyped], 128, (add X10_X13, X12_X15, X14_X17, X16_X19, X32_X35, X34_X37, X36_X39, X38_X41, X40_X43, X42_X45, X44_X47, X46_X49, X6_X9, X28_X31, X30_X33, X96_X99, X98_X101, X100_X103, X102_X105, X104_X107, X106_X109, X108_X111, X110_X113, X112_X115, X114_X117, X116_X119, X118_X121, X120_X123, X122_X125, X124_X127, X8_X11, X18_X21, X20_X23, X22_X25, X24_X27, X26_X29, X48_X51, X50_X53, X52_X55, X54_X57, X56_X59, X58_X61, X60_X63, X62_X65, X64_X67, X66_X69, X68_X71, X70_X73, X72_X75, X74_X77, X76_X79, X78_X81, X80_X83, X82_X85, X84_X87, X86_X89, X88_X91, X90_X93, X92_X95, X94_X97)>;
 
 // The register class is added for inline assembly for vector mask types.
 def VM : VReg<VMaskVTs,

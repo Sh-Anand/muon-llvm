@@ -414,6 +414,22 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
     }
 
+  // Vortex register runs: a copy a register at a time, from the end when the source is below and overlaps
+  if (RISCV::VXQuadRegClass.contains(DstReg, SrcReg) || RISCV::VXPairRegClass.contains(DstReg, SrcReg)) {
+    bool Quad = RISCV::VXQuadRegClass.contains(DstReg);
+    static const unsigned Subs[] = {RISCV::sub_gpr_q0, RISCV::sub_gpr_q1, RISCV::sub_gpr_q2, RISCV::sub_gpr_q3,
+                                    RISCV::sub_gpr_even, RISCV::sub_gpr_odd};
+    ArrayRef<unsigned> Idx = Quad ? ArrayRef(Subs, 4) : ArrayRef(Subs + 4, 2);
+    bool Backward = TRI->getSubReg(DstReg, Idx[0]) > TRI->getSubReg(SrcReg, Idx[0]);
+    for (unsigned K = 0; K < Idx.size(); ++K) {
+      unsigned I = Backward ? Idx[Idx.size() - 1 - K] : Idx[K];
+      BuildMI(MBB, MBBI, DL, get(RISCV::ADDI), TRI->getSubReg(DstReg, I))
+          .addReg(TRI->getSubReg(SrcReg, I), getKillRegState(KillSrc))
+          .addImm(0);
+    }
+    return;
+  }
+
   if (RISCV::GPRPairRegClass.contains(DstReg, SrcReg)) {
     // Emit an ADDI for both parts of GPRPair.
     BuildMI(MBB, MBBI, DL, get(RISCV::ADDI),
@@ -593,6 +609,17 @@ void RISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   llvm_unreachable("Impossible reg-to-reg copy");
 }
 
+// Vortex register runs spill and reload a word at a time: the run's registers, in order, as its slot's words
+static ArrayRef<unsigned> vxRunSubRegs(const TargetRegisterClass *RC) {
+  static const unsigned Quad[] = {RISCV::sub_gpr_q0, RISCV::sub_gpr_q1, RISCV::sub_gpr_q2, RISCV::sub_gpr_q3};
+  static const unsigned Pair[] = {RISCV::sub_gpr_even, RISCV::sub_gpr_odd};
+  if (RISCV::VXQuadRegClass.hasSubClassEq(RC))
+    return Quad;
+  if (RISCV::VXPairRegClass.hasSubClassEq(RC))
+    return Pair;
+  return {};
+}
+
 void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator I,
                                          Register SrcReg, bool IsKill, int FI,
@@ -601,6 +628,22 @@ void RISCVInstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                          Register VReg) const {
   MachineFunction *MF = MBB.getParent();
   MachineFrameInfo &MFI = MF->getFrameInfo();
+
+  if (ArrayRef<unsigned> Subs = vxRunSubRegs(RC); !Subs.empty()) {
+    MachineMemOperand *MMO = MF->getMachineMemOperand(
+        MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOStore,
+        MFI.getObjectSize(FI), MFI.getObjectAlign(FI));
+    for (unsigned K = 0; K < Subs.size(); ++K) {
+      unsigned Kill = getKillRegState(IsKill && K + 1 == Subs.size());
+      auto MIB = BuildMI(MBB, I, DebugLoc(), get(RISCV::SW));
+      if (SrcReg.isPhysical())
+        MIB.addReg(TRI->getSubReg(SrcReg, Subs[K]), Kill);
+      else
+        MIB.addReg(SrcReg, Kill, Subs[K]);
+      MIB.addFrameIndex(FI).addImm(4 * K).addMemOperand(MMO);
+    }
+    return;
+  }
 
   unsigned Opcode;
   bool IsScalableVector = true;
@@ -684,6 +727,21 @@ void RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                           Register VReg) const {
   MachineFunction *MF = MBB.getParent();
   MachineFrameInfo &MFI = MF->getFrameInfo();
+
+  if (ArrayRef<unsigned> Subs = vxRunSubRegs(RC); !Subs.empty()) {
+    MachineMemOperand *MMO = MF->getMachineMemOperand(
+        MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOLoad,
+        MFI.getObjectSize(FI), MFI.getObjectAlign(FI));
+    for (unsigned K = 0; K < Subs.size(); ++K) {
+      auto MIB = BuildMI(MBB, I, DebugLoc(), get(RISCV::LW));
+      if (DstReg.isPhysical())
+        MIB.addReg(TRI->getSubReg(DstReg, Subs[K]), RegState::Define);
+      else
+        MIB.addReg(DstReg, RegState::Define | (K == 0 ? RegState::Undef : 0), Subs[K]);
+      MIB.addFrameIndex(FI).addImm(4 * K).addMemOperand(MMO);
+    }
+    return;
+  }
 
   unsigned Opcode;
   bool IsScalableVector = true;

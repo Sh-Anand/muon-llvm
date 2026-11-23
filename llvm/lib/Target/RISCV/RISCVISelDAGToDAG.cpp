@@ -1423,6 +1423,27 @@ void RISCVDAGToDAGISel::Select(SDNode *Node) {
       // By default we do not custom select any intrinsic.
     default:
       break;
+    case Intrinsic::riscv_vx_mma_bf16: {
+      // A (operands 1-4), B (5-6) and C (7-10) each become a register run; D's words are the result run's
+      static const unsigned Quad[] = {RISCV::sub_gpr_q0, RISCV::sub_gpr_q1, RISCV::sub_gpr_q2,
+                                      RISCV::sub_gpr_q3};
+      static const unsigned Pair[] = {RISCV::sub_gpr_even, RISCV::sub_gpr_odd};
+      auto Run = [&](const TargetRegisterClass &RC, ArrayRef<unsigned> Subs, unsigned First) {
+        SmallVector<SDValue, 9> Ops = {CurDAG->getTargetConstant(RC.getID(), DL, MVT::i32)};
+        for (unsigned I = 0; I < Subs.size(); ++I) {
+          Ops.push_back(Node->getOperand(First + I));
+          Ops.push_back(CurDAG->getTargetConstant(Subs[I], DL, MVT::i32));
+        }
+        return SDValue(CurDAG->getMachineNode(TargetOpcode::REG_SEQUENCE, DL, MVT::Untyped, Ops), 0);
+      };
+      SDValue A = Run(RISCV::VXQuadRegClass, Quad, 1), B = Run(RISCV::VXPairRegClass, Pair, 5),
+              C = Run(RISCV::VXQuadRegClass, Quad, 7);
+      SDValue D(CurDAG->getMachineNode(RISCV::PseudoVX_MMA_BF16, DL, MVT::Untyped, A, B, C), 0);
+      for (unsigned I = 0; I < 4; ++I)
+        ReplaceUses(SDValue(Node, I), CurDAG->getTargetExtractSubreg(Quad[I], DL, VT, D));
+      CurDAG->RemoveDeadNode(Node);
+      return;
+    }
     case Intrinsic::riscv_vmsgeu:
     case Intrinsic::riscv_vmsge: {
       SDValue Src1 = Node->getOperand(1);

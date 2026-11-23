@@ -138,12 +138,19 @@ bool RISCVRegBudget::runOnMachineFunction(MachineFunction &MF) {
     if (MRI.reg_nodbg_empty(R) || !LIS.hasInterval(R))
       continue;
     const TargetRegisterClass *RC = MRI.getRegClassOrNull(R);
-    if (!RC || !RC->getNumRegs() || Index(*RC->begin()) < 0)
+    if (!RC || !RC->getNumRegs())
+      continue;
+    // a GPR value takes one register, a vx_mma register run its two or four
+    int Width = RISCV::VXQuadRegClass.hasSubClassEq(RC)   ? 4
+                : RISCV::VXPairRegClass.hasSubClassEq(RC) ? 2
+                : Index(*RC->begin()) >= 0                ? 1
+                                                          : 0;
+    if (!Width)
       continue;
     auto Shared = Shares.find(R);
-    int Reg = Shared == Shares.end() ? -1 : Shared->second;
+    int Reg = Shared == Shares.end() || Width > 1 ? -1 : Shared->second;
     for (const LiveRange::Segment &S : LIS.getInterval(R))
-      Events.push_back({S.start, 1, Reg, false}), Events.push_back({S.end, -1, Reg, false});
+      Events.push_back({S.start, Width, Reg, false}), Events.push_back({S.end, -Width, Reg, false});
   }
   for (unsigned I : Fixed.set_bits()) {
     MCRegister P = RISCV::X0 + I;

@@ -95,6 +95,15 @@ let TargetPrefix = "riscv" in {
 
   def int_riscv_vx_uniform : Intrinsic<[llvm_any_ty], [llvm_any_ty], [IntrNoMem]>;
 
+  // Vortex: warp matrix multiply, D = A * B + C (vx_mma.bf16), by all the warp's threads at once.  A thread's
+  // shares as words: A's 4, B's 2, C's 4 (fp32 bits); it returns D's 4
+  def int_riscv_vx_mma_bf16
+      : DefaultAttrsIntrinsic<[llvm_i32_ty, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty],
+                              [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty,
+                               llvm_i32_ty, llvm_i32_ty,
+                               llvm_i32_ty, llvm_i32_ty, llvm_i32_ty, llvm_i32_ty],
+                              [IntrNoMem, IntrConvergent]>;
+
   class VortexCSRIntrinsicsImpl<LLVMType itype>
       : Intrinsic<[itype], [], [IntrNoMem, IntrWillReturn]>;
 

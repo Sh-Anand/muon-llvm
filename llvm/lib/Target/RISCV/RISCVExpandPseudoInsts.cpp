@@ -106,6 +106,23 @@ bool RISCVExpandPseudo::expandMI(MachineBasicBlock &MBB,
   // expanded instructions for each pseudo is correct in the Size field of the
   // tablegen definition for the pseudo.
   switch (MBBI->getOpcode()) {
+  case RISCV::PseudoVX_MMA_BF16: {
+    // vx_mma.bf16 names each run's first register; the runs themselves stay on it as implicit operands
+    const TargetRegisterInfo *TRI = MBB.getParent()->getSubtarget().getRegisterInfo();
+    Register D = MBBI->getOperand(0).getReg(), A = MBBI->getOperand(1).getReg(),
+             B = MBBI->getOperand(2).getReg(), C = MBBI->getOperand(3).getReg();
+    BuildMI(MBB, MBBI, MBBI->getDebugLoc(), TII->get(RISCV::VX_MMA_BF16),
+            TRI->getSubReg(D, RISCV::sub_gpr_q0))
+        .addReg(TRI->getSubReg(A, RISCV::sub_gpr_q0))
+        .addReg(TRI->getSubReg(B, RISCV::sub_gpr_even))
+        .addReg(TRI->getSubReg(C, RISCV::sub_gpr_q0))
+        .addReg(D, RegState::ImplicitDefine)
+        .addReg(A, RegState::Implicit)
+        .addReg(B, RegState::Implicit)
+        .addReg(C, RegState::Implicit);
+    MBBI->eraseFromParent();
+    return true;
+  }
   case RISCV::PseudoRV32ZdinxSD:
     return expandRV32ZdinxStore(MBB, MBBI);
   case RISCV::PseudoRV32ZdinxLD:
