@@ -10,6 +10,7 @@
 #include "MCTargetDesc/RISCVMatInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/CostTable.h"
 #include "llvm/CodeGen/TargetLowering.h"
@@ -17,6 +18,12 @@
 #include <cmath>
 #include <optional>
 using namespace llvm;
+
+// Vortex: unroll threshold for a loop that indexes a function's local array, so that the array's elements end
+// up in registers (an array indexed by a value known only at run time stays in memory)
+static cl::opt<unsigned> VortexUnrollThresholdPrivate(
+    "riscv-vortex-unroll-threshold-private", cl::Hidden, cl::init(2700),
+    cl::desc("Vortex: unroll threshold for loops that index a local array"));
 
 #define DEBUG_TYPE "riscvtti"
 
@@ -1393,6 +1400,24 @@ void RISCVTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
   // TODO: More tuning on benchmarks and metrics with changes as needed
   //       would apply to all settings below to enable performance.
 
+  // Vortex: a loop that indexes a local array of at most 1 KB by a value that changes with the loop is unrolled
+  // up to a much larger size, as AMDGPU does for its private arrays: only then are the indices constants and
+  // the array's elements registers, instead of memory
+  if (ST->hasVendorXVortex()) {
+    const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
+    for (BasicBlock *BB : L->getBlocks())
+      for (Instruction &I : *BB) {
+        auto *GEP = dyn_cast<GetElementPtrInst>(&I);
+        auto *Alloca = GEP ? dyn_cast<AllocaInst>(getUnderlyingObject(GEP->getPointerOperand())) : nullptr;
+        if (!Alloca || !Alloca->isStaticAlloca())
+          continue;
+        std::optional<TypeSize> Size = Alloca->getAllocationSize(DL);
+        if (!Size || Size->isScalable() || Size->getFixedValue() > 1024)
+          continue;
+        if (any_of(GEP->indices(), [&](const Value *Idx) { return !L->isLoopInvariant(Idx); }))
+          UP.Threshold = std::max<unsigned>(UP.Threshold, VortexUnrollThresholdPrivate);
+      }
+  }
 
   if (ST->enableDefaultUnroll())
     return BasicTTIImplBase::getUnrollingPreferences(L, SE, UP, ORE);
@@ -1438,6 +1463,9 @@ void RISCVTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
         return;
 
       if (isa<CallInst>(I) || isa<InvokeInst>(I)) {
+        // Vortex: inline asm is an instruction or two, not a call
+        if (ST->hasVendorXVortex() && cast<CallBase>(I).isInlineAsm())
+          continue;
         if (const Function *F = cast<CallBase>(I).getCalledFunction()) {
           if (!isLoweredToCall(F))
             continue;
