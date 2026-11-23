@@ -495,6 +495,14 @@ void RISCVPassConfig::addIRPasses() {
     addPass(createRISCVGatherScatterLoweringPass());
     addPass(createInterleavedAccessPass());
     addPass(createRISCVCodeGenPreparePass());
+
+    // Vortex: an unrolled loop's addresses are a base plus constants buried in arithmetic, such as
+    // A + (r + i) * 144.  Split the constants out, as the GPU backends do, so that one base serves them and
+    // each constant goes in its load's or store's offset, instead of one register per address
+    if (gVortexBranchDivergenceMode != 0) {
+      addPass(createSeparateConstOffsetFromGEPPass());
+      addPass(createEarlyCSEPass());
+    }
   }
 
   TargetPassConfig::addIRPasses();
